@@ -99,9 +99,13 @@ function rateTeam(team, byId, stats, cfg) {
   if (xi.filter(p => p.overseas).length === 4 && squad.filter(p => p.overseas).length >= 6) T.push("Heavy overseas dependence: availability clashes could break the XI");
   if (!T.length) T.push("Main risk is injuries and form over a long season");
 
+  // headline metrics shown on the Compare screen
+  const strength = r1((batting + bowling + allround) / 3);                                       // quality of the core XI
+  const areas = [["Batting", batting], ["Bowling", bowling], ["All-round", allround], ["Bench", depth]].sort((a, b) => a[1] - b[1]);
+  const weakest = { area: areas[0][0], score: r1(areas[0][1]) };                                  // the weakest link
   return {
-    teamId: team.id, name: team.name, color: team.color, owner: team.ownerName,
-    overall, scores: { batting: r1(batting), bowling: r1(bowling), allround: r1(allround), depth: r1(depth), balance: r1(balance) },
+    teamId: team.id, strength, weakest, name: team.name, color: team.color, owner: team.ownerName,
+    overall, bench: r1(depth), scores: { batting: r1(batting), bowling: r1(bowling), allround: r1(allround), depth: r1(depth), balance: r1(balance) },
     xi: xi.map(p => ({ name: p.name, role: p.role, overseas: p.overseas, price: p.price, photo: p.photo || "", score: Math.round(p.score) })),
     impact: bench[0] ? { name: bench[0].name, role: bench[0].role, overseas: bench[0].overseas, photo: bench[0].photo || "" } : null,
     swot: { strengths: S, weaknesses: W, opportunities: O, threats: T }, squadSize: squad.length, purseLeft: team.purse,

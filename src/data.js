@@ -97,8 +97,40 @@ function loadPhotos(file) {
   catch (e) { console.warn("photos.json ignored:", e.message); return {}; }
 }
 
-function loadPlayers(csvPath, photosPath) {
-  const photos = loadPhotos(photosPath);
+// ---- assets: player photos, team logos, theme songs. Dropped-in files always win over downloaded ones. ----
+const _norm = s => s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[.'’]/g, "").replace(/-/g, " ").trim();
+const slug = n => _norm(n).replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+const PUBLIC = require("path").join(__dirname, "..", "public");
+let _assetCache = null;
+function listDir(dir, exts) {
+  try { return require("fs").readdirSync(dir).filter(f => exts.test(f)); } catch { return []; }
+}
+// logos: public/logos/<TEAM>.(svg|png|webp|jpg)   themes: public/audio/themes/<TEAM>.(mp3|ogg|m4a|wav)
+function scanAssets(publicDir = PUBLIC) {
+  const now = Date.now();
+  if (publicDir === PUBLIC && _assetCache && now - _assetCache.t < 15000) return _assetCache.v;
+  const path = require("path"), v = { logos: {}, themes: {} };
+  for (const t of TEAMS) {
+    const l = listDir(path.join(publicDir, "logos"), /\.(svg|png|webp|jpe?g)$/i).find(f => path.parse(f).name.toLowerCase() === t.id.toLowerCase());
+    if (l) v.logos[t.id] = "/logos/" + l;
+    const m = listDir(path.join(publicDir, "audio", "themes"), /\.(mp3|ogg|m4a|wav)$/i).find(f => path.parse(f).name.toLowerCase() === t.id.toLowerCase());
+    if (m) v.themes[t.id] = "/audio/themes/" + m;
+  }
+  if (publicDir === PUBLIC) _assetCache = { t: now, v };
+  return v;
+}
+// photo files: <slug>-ipl.* (IPL/franchise photo, preferred) then <slug>.* (Wikipedia or your own)
+function scanPhotos(dir = require("path").join(PUBLIC, "photos")) {
+  const files = listDir(dir, /\.(jpe?g|png|webp|gif)$/i), out = {};
+  for (const f of files) {
+    const base = require("path").parse(f).name.toLowerCase(), ipl = base.endsWith("-ipl"), key = ipl ? base.slice(0, -4) : base;
+    if (ipl || !out[key] || !out[key].ipl) out[key] = { file: "/photos/" + f, ipl };
+  }
+  return out;
+}
+
+function loadPlayers(csvPath, photosPath, photosDir) {
+  const photos = loadPhotos(photosPath), onDisk = scanPhotos(photosDir);
   let list = builtInPlayers();
   try {
     const fs = require("fs");
@@ -119,7 +151,7 @@ function loadPlayers(csvPath, photosPath) {
   } catch (e) { console.warn("players.csv ignored:", e.message); }
   const seen = new Set();
   list = list.filter(p => { const k = p.name.toLowerCase(); if (seen.has(k)) { console.warn("Duplicate name skipped:", p.name); return false; } seen.add(k); return true; });  // each player only once
-  list.forEach(p => { p.extra = p.extra || {}; p.photo = p.photo || photos[p.name] || ""; p.set = setFor(p); });   // photo: CSV column, else data/photos.json (npm run photos)
+  list.forEach(p => { p.extra = p.extra || {}; const d = onDisk[slug(p.name)]; p.photo = p.photo || (d && d.ipl ? d.file : "") || photos[p.name] || (d ? d.file : ""); p.photoIpl = !!(d && d.ipl && p.photo === d.file); p.set = setFor(p); });   // photo: CSV column, else data/photos.json (npm run photos)
   list.sort((a, b) => (SET_ORDER.indexOf(a.set) - SET_ORDER.indexOf(b.set)) || (b.basePrice - a.basePrice) || a.name.localeCompare(b.name));
   return list.map((p, i) => ({ id: i + 1, status: "upcoming", ...p }));
 }
@@ -130,4 +162,4 @@ function loadStats(file) {
   catch (e) { console.warn("stats.json ignored:", e.message); return {}; }
 }
 
-module.exports = { TEAMS, SET_ORDER, loadPlayers, loadStats, loadPhotos, builtInPlayers };
+module.exports = { slug, scanAssets, scanPhotos, TEAMS, SET_ORDER, loadPlayers, loadStats, loadPhotos, builtInPlayers };

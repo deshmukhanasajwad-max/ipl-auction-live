@@ -48,8 +48,22 @@ test("create room, join by code, claim, start, bid, sell, no id leaks", async ()
   assert.ok(!JSON.stringify(st).includes("hostuser0001"), "user ids must not leak");
   assert.strictEqual((await b.event("bid")).amount, up.basePrice);
 
-  a.emit("host_action", { action: "sell_now" });
-  const sold = await b.event("player_sold");
+  // only the host may end the round; Sell now / Skip no longer exist
+  b.events = []; b.emit("end_round");
+  assert.match(await b.event("error_msg"), /Host only/);
+  b.emit("host_action", { action: "sell_now" });
+  await wait(100);
+  assert.strictEqual(b.last.bid.teamId, "MI", "host_action is gone, player still on the block");
+  a.emit("end_round");
+  const sold = await b.event("player_sold");               // the high bidder wins the player on the block
   assert.strictEqual(sold.teamId, "MI");
+  const after = await b.until(s => s.progress && s.log.some(l => /ended the round/.test(l.text)));
+  assert.ok(after.log.some(l => l.kind === "sold" && "photo" in l), "feed entries carry the player photo");
+  assert.ok(after.insights && after.insights.headline, "coach insight present for team owners");
+
+  a.emit("end_auction");
+  const done = await b.until(s => s.status === "COMPLETED");
+  assert.ok(done.endedEarly && done.compare && done.compare.length === 2);
+  a.emit("leave_room");
   a.close(); b.close();
 });

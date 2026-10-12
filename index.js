@@ -77,7 +77,9 @@ io.on("connection", socket => {
   socket.on("rtm_decision", ({ match } = {}) => act((a, u) => a.rtmDecision(u, match)));
   socket.on("pause", () => act((a, u) => a.pause(u)));
   socket.on("resume", () => act((a, u) => a.resume(u)));
-  socket.on("host_action", ({ action } = {}) => act((a, u) => a.hostAction(u, action)));
+  socket.on("end_round", () => act((a, u) => a.endRound(u)));
+  socket.on("end_auction", () => act((a, u) => a.endAuction(u)));
+  socket.on("leave_room", () => { const a = room(); if (!a) return; a.sockets.delete(socket.id); socket.leave(a.code); socket.data = {}; broadcast(a); });
   socket.on("disconnect", () => { const a = room(); if (a) { a.sockets.delete(socket.id); broadcast(a); } });
 });
 

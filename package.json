@@ -1,6 +1,6 @@
 {
   "name": "ipl-auction-live",
-  "version": "2.0.0",
+  "version": "5.0.0",
   "description": "Real-time IPL mega auction platform with rooms, live bidding and IPL rules",
   "main": "index.js",
   "scripts": {
@@ -10,14 +10,16 @@
     "build-csv": "node scripts/build-csv.js",
     "stats": "node scripts/build-stats.js",
     "photos": "node scripts/build-photos.js",
-    "setup-data": "node scripts/build-photos.js && node scripts/build-stats.js"
+    "setup-data": "node scripts/build-photos.js && node scripts/fetch-assets.js && node scripts/build-stats.js",
+    "postinstall": "node scripts/postinstall.js",
+    "assets": "node scripts/fetch-assets.js"
   },
   "dependencies": {
     "express": "^4.19.2",
-    "socket.io": "^4.7.5"
+    "socket.io": "^4.7.5",
+    "adm-zip": "^0.6.1"
   },
   "devDependencies": {
-    "adm-zip": "^0.6.1",
     "socket.io-client": "^4.7.5"
   },
   "engines": {

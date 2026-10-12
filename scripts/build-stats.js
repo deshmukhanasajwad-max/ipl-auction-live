@@ -12,7 +12,7 @@ const SOURCES = ["t20s_male", "it20s_male", "ipl_male", "bbl_male", "psl_male", 
 const NOT_BOWLER_WICKET = ["run out", "retired hurt", "retired out", "obstructing the field", "retired not out"];
 const NOT_OUT_KINDS = ["retired hurt", "retired not out"];
 
-const blank = () => ({ m: 0, runs: 0, balls: 0, outs: 0, inn: 0, f: 0, h: 0, fours: 0, sixes: 0, bb: 0, br: 0, w: 0 });
+const blank = () => ({ m: 0, runs: 0, balls: 0, outs: 0, inn: 0, f: 0, h: 0, fours: 0, sixes: 0, bb: 0, br: 0, w: 0, hs: 0, hsNo: 0, bw: 0, bwr: 0 });
 
 // ---- one match -> accumulator (Map id -> { names:Set, y:{year:stats} }) ----
 function processMatch(m, acc) {
@@ -31,7 +31,8 @@ function processMatch(m, acc) {
   };
   for (const list of Object.values(info.players || {})) for (const n of list) { const r = rec(n); if (r) r.m++; }
   for (const inn of m.innings || []) {
-    const runsIn = {}, seen = new Set();
+    if (inn.super_over) continue;                          // super overs are not part of career numbers
+    const runsIn = {}, seen = new Set(), outIn = new Set(), bwW = {}, bwR = {};
     for (const ov of inn.overs || []) for (const d of ov.deliveries || []) {
       const ex = d.extras || {}, rb = (d.runs && d.runs.batter) || 0, total = (d.runs && d.runs.total) || 0;
       const b = rec(d.batter);
@@ -43,23 +44,39 @@ function processMatch(m, acc) {
         runsIn[d.batter] = (runsIn[d.batter] || 0) + rb; seen.add(d.batter);
       }
       const bw = rec(d.bowler);
-      if (bw) { if (!ex.wides && !ex.noballs) bw.bb++; bw.br += total - (ex.byes || 0) - (ex.legbyes || 0); }
+      if (bw) { if (!ex.wides && !ex.noballs) bw.bb++; const c = total - (ex.byes || 0) - (ex.legbyes || 0); bw.br += c; bwR[d.bowler] = (bwR[d.bowler] || 0) + c; }
       for (const w of d.wickets || []) {
-        if (!NOT_OUT_KINDS.includes(w.kind)) { const o = rec(w.player_out); if (o) { o.outs++; seen.add(w.player_out); } }
-        if (bw && !NOT_BOWLER_WICKET.includes(w.kind)) bw.w++;
+        if (!NOT_OUT_KINDS.includes(w.kind)) { const o = rec(w.player_out); if (o) { o.outs++; seen.add(w.player_out); outIn.add(w.player_out); } }
+        if (bw && !NOT_BOWLER_WICKET.includes(w.kind)) { bw.w++; bwW[d.bowler] = (bwW[d.bowler] || 0) + 1; }
       }
     }
-    for (const n of seen) { const r = rec(n); if (r) { r.inn++; if ((runsIn[n] || 0) >= 100) r.h++; else if ((runsIn[n] || 0) >= 50) r.f++; } }
+    for (const n of seen) {
+      const r = rec(n), x = runsIn[n] || 0;
+      if (r) { r.inn++; if (x >= 100) r.h++; else if (x >= 50) r.f++; if (x > r.hs || (x === r.hs && !outIn.has(n))) { r.hs = x; r.hsNo = outIn.has(n) ? 0 : 1; } }
+    }
+    for (const n of Object.keys(bwR)) {                    // best bowling figures in an innings
+      const r = rec(n), w = bwW[n] || 0;
+      if (r && (w > r.bw || (w === r.bw && w > 0 && bwR[n] < r.bwr))) { r.bw = w; r.bwr = bwR[n]; }
+    }
   }
   return true;
 }
 
 const yearRec = (a, y) => sum(Object.entries(a.k).filter(([k]) => k.startsWith(y + "|")).map(([, r]) => r));
-const sum = (list) => list.reduce((t, r) => { for (const k in r) t[k] = (t[k] || 0) + r[k]; return t; }, blank());
+const sum = (list) => list.reduce((t, r) => {
+  for (const k in r) {
+    if (k === "hs") { if (r.hs > t.hs || (r.hs === t.hs && r.hsNo)) { t.hs = r.hs; t.hsNo = r.hsNo; } }
+    else if (k === "hsNo") continue;
+    else if (k === "bw") { if (r.bw > t.bw || (r.bw === t.bw && r.bw > 0 && r.bwr < t.bwr)) { t.bw = r.bw; t.bwr = r.bwr; } }
+    else if (k === "bwr") continue;
+    else t[k] = (t[k] || 0) + r[k];
+  }
+  return t;
+}, blank());
 const round1 = x => Math.round(x * 10) / 10;
 function summarize(r, career) {
   const o = { m: r.m, runs: r.runs, sr: r.balls ? round1(r.runs / r.balls * 100) : null, avg: r.outs ? round1(r.runs / r.outs) : null, wkts: r.w, econ: r.bb ? round1(r.br / (r.bb / 6)) : null };
-  if (career) { o.fifties = r.f; o.hundreds = r.h; o.fours = r.fours; o.sixes = r.sixes; }
+  if (career) { o.fifties = r.f; o.hundreds = r.h; o.fours = r.fours; o.sixes = r.sixes; o.inn = r.inn; o.hs = r.hs ? `${r.hs}${r.hsNo ? "*" : ""}` : null; o.best = r.bw ? `${r.bw}/${r.bwr}` : null; o.balls = r.balls; }
   return o;
 }
 
@@ -93,7 +110,8 @@ function buildStats(acc, players, aliases = {}) {
     const byComp = {};
     for (const [k, r] of Object.entries(best.a.k)) { const c = k.slice(k.indexOf("|") + 1); (byComp[c] = byComp[c] || []).push(r); }
     const leagues = Object.entries(byComp).map(([name, l]) => [name, sum(l)]).filter(([, r]) => r.m > 0).sort((x, y) => y[1].m - x[1].m).slice(0, 10).map(([name, r]) => ({ name, ...summarize(r) }));
-    out[p.name] = { matchedAs: [...best.a.names][0], t20: summarize(all, true), years: Object.fromEntries(YEARS.map(y => [y, summarize(yearRec(best.a, y))])), leagues };
+    const only = c => { const l = Object.entries(best.a.k).filter(([k]) => k.slice(k.indexOf("|") + 1) === c).map(([, r]) => r); const t = sum(l); return t.m ? summarize(t, true) : null; };
+    out[p.name] = { matchedAs: [...best.a.names][0], t20: summarize(all, true), ipl: only("Indian Premier League"), intl: only("T20 Internationals"), years: Object.fromEntries(YEARS.map(y => [y, summarize(yearRec(best.a, y))])), leagues };
   }
   return { out, report };
 }

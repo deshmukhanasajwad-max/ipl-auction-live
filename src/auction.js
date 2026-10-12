@@ -2,8 +2,9 @@
 // hooks = { event(type, payload), changed() } are called when something happens.
 const { CONFIG, nextBid, canBid } = require("./rules");
 const path = require("path");
-const { TEAMS, loadPlayers, loadStats } = require("./data");
+const { TEAMS, SET_ORDER, loadPlayers, loadStats, scanAssets } = require("./data");
 const { buildCompare } = require("./compare");
+const { coach } = require("./insights");
 
 const rid = () => require("crypto").randomBytes(8).toString("hex");
 const fail = msg => { throw new Error(msg); };
@@ -19,7 +20,8 @@ class Auction {
     this.round = opts.round || 1;           // 1 = main sets, 2 = accelerated round (unsold players)
     this.teams = opts.teams || TEAMS.map(t => ({ ...t, ownerId: null, ownerName: null, purse: this.config.purse, rtmCards: this.config.rtmCards, squad: [] }));
     this.players = opts.players || loadPlayers(path.join(__dirname, "..", "data", "players.csv"), path.join(__dirname, "..", "data", "photos.json"));
-    this.stats = opts.stats || loadStats(path.join(__dirname, "..", "data", "stats.json"));
+    this.stats = opts.stats || loadStats(process.env.STATS_FILE || path.join(__dirname, "..", "data", "stats.json"));
+    this.endedEarly = !!opts.endedEarly;
     this._cmp = null;
     this.queue = opts.queue || [];
     this.current = opts.current || null;
@@ -44,7 +46,7 @@ class Auction {
   _isHost(userId) { return userId === this.hostId; }
   _changed() { this.updatedAt = Date.now(); this.hooks.changed && this.hooks.changed(); }
   _event(type, payload) { this.hooks.event && this.hooks.event(type, payload); }
-  _log(text) { this.log.push({ t: Date.now(), text }); if (this.log.length > 60) this.log.shift(); }
+  _log(text, extra = {}) { this.log.push({ t: Date.now(), text, ...extra }); if (this.log.length > 60) this.log.shift(); }
   _schedule(ms, fn) { clearTimeout(this._t); this.deadline = Date.now() + ms; this._t = setTimeout(fn, ms); }
   _stop() { clearTimeout(this._t); this._t = null; this.deadline = null; }
   destroy() { this._stop(); }
@@ -171,7 +173,7 @@ class Auction {
     p.status = "sold"; p.soldTo = teamId; p.soldPrice = amount;
     this.lastResult = { name: p.name, teamId, amount, sold: true, rtm: viaRtm };
     this.history.push({ kind: "sold", player: p.name, teamId, amount, rtm: viaRtm, t: Date.now() });
-    this._log(`SOLD ${p.name} to ${t.id} for ${amount} lakh${viaRtm ? " (RTM)" : ""}`);
+    this._log(`SOLD ${p.name} to ${t.id} for ${amount} lakh${viaRtm ? " (RTM)" : ""}`, { kind: "sold", player: p.name, photo: p.photo || "", teamId: t.id, amount });
     this._event("player_sold", this.lastResult);
     this._breakThenNext();
   }
@@ -180,7 +182,7 @@ class Auction {
     p.status = "unsold";
     this.lastResult = { name: p.name, sold: false };
     this.history.push({ kind: "unsold", player: p.name, t: Date.now() });
-    this._log(`UNSOLD ${p.name}`);
+    this._log(`UNSOLD ${p.name}`, { kind: "unsold", player: p.name, photo: p.photo || "" });
     this._event("player_unsold", this.lastResult);
     this._breakThenNext();
   }
@@ -208,12 +210,34 @@ class Auction {
     else this._schedule(this.config.breakMs, () => this._next());
     this._event("resumed", {}); this._changed();
   }
-  hostAction(userId, action) {
+  // Settle whatever is on the block right now (no RTM window): sold to the high bidder, else unsold.
+  _closeCurrent() {
+    if (this.phase === "BIDDING") return this.bid.teamId ? this._sell(this.bid.teamId, this.bid.amount, false) : this._unsold();
+    if (this.phase === "RTM") return this._rtmDone(false);
+  }
+  _setOfNext() { const c = this.current && this._p(this.current); return c ? c.set : (this.queue.length ? this._p(this.queue[0]).set : null); }
+  // End the current category set: settle the player on the block, push the rest of the set to "unsold", move on.
+  endRound(userId) {
     if (!this._isHost(userId)) fail("Host only");
-    if (this.status !== "LIVE" || this.phase !== "BIDDING") fail("No player is being auctioned");
-    if (action === "sell_now") return this._onTimeout();
-    if (action === "skip") return this._unsold();
-    fail("Unknown action");
+    if (this.status !== "LIVE") fail(this.status === "PAUSED" ? "Resume the auction first" : "Auction is not running");
+    const set = this._setOfNext() || fail("Nothing to end");
+    this._closeCurrent();
+    const skipped = this.queue.filter(id => this._p(id).set === set);
+    skipped.forEach(id => { this._p(id).status = "unsold"; });
+    this.queue = this.queue.filter(id => !skipped.includes(id));
+    this._log(`Host ended the round: ${set}${skipped.length ? ` (${skipped.length} players left unsold)` : ""}`);
+    this._event("round_ended", { set, skipped: skipped.length });
+    if (this.phase === "IDLE") this._next(); else this._changed();   // BREAK continues into the next set by itself
+  }
+  // End the whole auction now: settle the player on the block, everyone else stays unsold, Compare opens.
+  endAuction(userId) {
+    if (!this._isHost(userId)) fail("Host only");
+    if (this.status !== "LIVE" && this.status !== "PAUSED") fail("Auction is not running");
+    this._closeCurrent();
+    this.queue.forEach(id => { const p = this._p(id); if (p.status === "upcoming") p.status = "unsold"; });
+    this.queue = []; this.endedEarly = true;
+    this._log("Host ended the auction");
+    this._complete();
   }
 
   // ---------- views ----------
@@ -248,9 +272,29 @@ class Auction {
       upcoming: this.queue.slice(0, 5).map(id => { const p = this._p(id); return { name: p.name, role: p.role, set: p.set, basePrice: p.basePrice, photo: p.photo || "" }; }),
       sold: this.players.filter(p => p.status === "sold").length,
       unsold: this.players.filter(p => p.status === "unsold").map(p => p.name),
-      lastResult: this.lastResult, log: this.log.slice(-25),
+      lastResult: this.lastResult, log: this.log.slice(-30),
+      progress: this.progress(), endedEarly: this.endedEarly, assets: scanAssets(),
+      insights: this.insightsFor(me),
       you: { teamId: me ? me.id : null, isHost: this._isHost(userId), bidError: userId ? this.bidError(userId) : null },
     };
+  }
+
+  progress() {
+    const cur = this.current ? this._p(this.current) : null;
+    const setName = cur ? cur.set : (this.queue.length ? this._p(this.queue[0]).set : null);
+    const sets = SET_ORDER.map(name => {
+      const list = this.players.filter(p => p.set === name);
+      return { name, total: list.length, done: list.filter(p => p.status !== "upcoming" && !(cur && p.id === cur.id && this.phase === "BIDDING")).length };
+    }).filter(x => x.total);
+    const total = this.players.length, done = this.players.filter(p => p.status === "sold" || p.status === "unsold").length;
+    return { set: setName, sets, total, done };
+  }
+
+  insightsFor(team) {
+    if (!team) return null;
+    const upcoming = this.players.filter(p => p.status === "upcoming" && p.id !== this.current);
+    const cur = this.current && this.phase === "BIDDING" ? this._p(this.current) : null;
+    return coach(team, { upcoming, current: cur, cfg: this.config, bid: this.bid, nextAmount: cur ? nextBid(this.bid.amount, cur.basePrice) : null, teams: this.teams });
   }
 
   getCompare() {
@@ -260,8 +304,8 @@ class Auction {
 
   // ---------- persistence ----------
   toJSON() {
-    const { code, hostId, hostName, config, status, phase, round, teams, players, queue, current, bid, rtm, lastResult, log, history, createdAt } = this;
-    return { code, hostId, hostName, config, status, phase, round, teams, players, queue, current, bid, rtm, lastResult, log, history, createdAt,
+    const { code, hostId, hostName, config, status, phase, round, teams, players, queue, current, bid, rtm, lastResult, log, history, createdAt, endedEarly } = this;
+    return { code, hostId, hostName, config, status, phase, round, teams, players, queue, current, bid, rtm, lastResult, log, history, createdAt, endedEarly,
       pausedLeft: this.deadline ? Math.max(0, this.deadline - Date.now()) : this.pausedLeft };
   }
   static fromJSON(obj, hooks) {

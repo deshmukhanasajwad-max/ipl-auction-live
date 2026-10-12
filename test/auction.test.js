@@ -123,3 +123,53 @@ test("public state never leaks user ids", () => {
   const s = JSON.stringify(a.publicState("u2"));
   assert.ok(!s.includes('"u2"') && !s.includes("host\""));
 });
+
+// ---- v5: end round / end auction / coach ----
+const { Auction: A5 } = require("../src/auction");
+function live() {
+  const a = new A5({ code: "TST005", hostId: "host-00001", config: { bidMs: 60000, breakMs: 60000 } });
+  a.claimTeam("host-00001", "H", "MI"); a.claimTeam("guest-0002", "G", "CSK"); a.start("host-00001");
+  return a;
+}
+test("end round settles the current player and skips the rest of that set", () => {
+  const a = live(), first = a._p(a.current), set = first.set;
+  const inSet = a.players.filter(p => p.set === set).length;
+  a.placeBid("guest-0002");
+  a.endRound("host-00001");
+  assert.strictEqual(first.status, "sold");
+  assert.ok(a.queue.every(id => a._p(id).set !== set));
+  assert.strictEqual(a.players.filter(p => p.set === set && p.status === "unsold").length, inSet - 1);
+  a.destroy();
+});
+test("end round: unsold current player and non-host rejected", () => {
+  const a = live();
+  assert.throws(() => a.endRound("guest-0002"), /Host only/);
+  const p = a._p(a.current); a.endRound("host-00001");
+  assert.strictEqual(p.status, "unsold");
+  a.destroy();
+});
+test("end auction completes immediately, leaves everything else unsold, builds compare", () => {
+  const a = live();
+  a.placeBid("guest-0002"); a.endAuction("host-00001");
+  assert.strictEqual(a.status, "COMPLETED"); assert.ok(a.endedEarly);
+  assert.strictEqual(a.players.filter(p => p.status === "upcoming").length, 0);
+  assert.strictEqual(a.publicState("host-00001").compare.length, 2);
+  assert.strictEqual(a.teams.find(t => t.id === "CSK").squad.length, 1);
+  assert.throws(() => a.endAuction("host-00001"), /not running/);
+  a.destroy();
+});
+test("sell now / skip are removed from the engine", () => { assert.strictEqual(typeof A5.prototype.hostAction, "undefined"); });
+test("coach: empty squad needs a keeper and bowlers; live player gets a fit verdict", () => {
+  const a = live(), st = a.publicState("guest-0002");
+  assert.ok(st.insights.headline);
+  assert.ok(st.insights.needs.some(n => n.role === "Wicketkeeper" && n.priority === "high"));
+  assert.ok(st.insights.live && ["must", "good", "luxury", "blocked"].includes(st.insights.live.fit));
+  assert.strictEqual(a.publicState(null).insights, null);   // spectators get no team advice
+  a.destroy();
+});
+test("progress reports the 16 sets in order with counts", () => {
+  const a = live(), pr = a.publicState("host-00001").progress;
+  assert.strictEqual(pr.set, "Capped Indian Batter");
+  assert.ok(pr.sets.length <= 16 && pr.total === a.players.length && pr.done === 0);
+  a.destroy();
+});
