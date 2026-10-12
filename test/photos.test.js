@@ -40,3 +40,11 @@ test("run downloads photos, keeps existing files, reports missing players, write
   assert.ok(fs.existsSync(path.join(out, "virat-kohli.jpg")));
   assert.ok(!("Unknown Person" in m));
 });
+
+test("lookup rejects a page about a different person who shares the surname", async () => {
+  const { lookup } = require("../scripts/build-photos");
+  const page = { index: 1, title: "David Warner (cricketer)", description: "Australian cricketer", thumbnail: { source: "https://x/w.jpg" } };
+  const fetchFn = async () => ({ ok: true, json: async () => ({ query: { pages: { 1: page } } }) });
+  assert.strictEqual(await lookup("Tim David", fetchFn), null);
+  assert.ok(await lookup("David Warner", fetchFn));
+});

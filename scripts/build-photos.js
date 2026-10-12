@@ -24,12 +24,12 @@ async function get(url, fetchFn, tries = 4) {          // polite: sends a User-A
 
 // find the Wikipedia lead image of "<name> cricketer"; the page must be about a cricketer with the surname in its title
 async function lookup(name, fetchFn = fetch) {
-  const last = norm(name).split(" ").pop();
+  const parts = norm(name).split(" "), last = parts.pop(), first = parts[0] || "";   // title must contain the surname AND the first name ("Tim David" must not match "David Warner")
   for (const q of [`${name} cricketer`, name]) {
     const u = "https://en.wikipedia.org/w/api.php?action=query&format=json&generator=search&gsrlimit=5&prop=pageimages|description&piprop=thumbnail&pithumbsize=500&gsrsearch=" + encodeURIComponent(q);
     const j = await (await get(u, fetchFn)).json();
     const pages = Object.values((j.query && j.query.pages) || {}).sort((a, b) => a.index - b.index);
-    const hit = pages.find(p => p.thumbnail && /cricket/i.test(p.description || "") && norm(p.title).includes(last));
+    const hit = pages.find(p => p.thumbnail && /cricket/i.test(p.description || "") && norm(p.title).split(/[^a-z0-9]+/).includes(last) && (!first || first.length < 3 || norm(p.title).includes(first)));
     if (hit) return { url: hit.thumbnail.source, title: hit.title };
   }
   return null;
