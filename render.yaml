@@ -1,0 +1,12 @@
+# Render Blueprint: tells Render exactly how to build and run the auction (one free web service).
+services:
+  - type: web
+    name: ipl-auction-live
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
