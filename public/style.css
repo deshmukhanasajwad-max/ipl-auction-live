@@ -37,7 +37,7 @@ label { display: block; margin: 12px 0 5px; color: var(--mute); font-size: 13px;
 
 /* ---------- crests, avatars ---------- */
 .crest { width: var(--s, 40px); height: var(--s, 40px); border-radius: 50%; flex: none; display: inline-grid; place-items: center; background: var(--c, #333); color: #fff; font: 800 calc(var(--s, 40px) * .34)/1 var(--head); letter-spacing: .02em; overflow: hidden; border: 2px solid #ffffff2e; box-shadow: 0 2px 10px #0006; }
-.crest img { width: 100%; height: 100%; object-fit: contain; background: #fff; padding: 12%; }
+.crest img { width: 100%; height: 100%; object-fit: cover; background: #fff; }
 .av { position: relative; width: 36px; height: 36px; border-radius: 50%; background: var(--panel2); display: inline-grid; place-items: center; overflow: hidden; flex: none; font: 700 13px var(--head); color: var(--mute); border: 1px solid var(--line); }
 .av img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: top; }
 .av.lg { width: 46px; height: 46px; }
