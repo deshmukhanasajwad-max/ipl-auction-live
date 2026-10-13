@@ -53,3 +53,12 @@ Free plan: sleeps after 15 minutes idle (open the link a few minutes before the 
 
 ## Structure
 `index.js` · `src/` rules, engine, compare, data, store · `scripts/` build-photos, build-stats, build-csv · `public/` client + photos · `test/`
+
+## v5 additions
+- Host buttons: **End round** (ends the current category set) and **End auction** (opens Compare). Sell now / Skip were removed.
+- **Smart coach**: rule-based advice per team (needs by role, capped/uncapped, budget, live "must have / luxury" verdict). Not an LLM.
+- Player card shows IPL record and international T20 record (from Cricsheet, built on deploy) plus last 3 years.
+- **Logos**: put `public/logos/CSK.png` (or .svg/.webp) etc. Without a file a coloured badge is shown.
+- **Theme songs**: put `public/audio/themes/CSK.mp3` etc. They play about 5 seconds after "Sold!". Without a file an original jingle plays.
+- **Photos**: `public/photos/<player-slug>-ipl.jpg` is preferred over the downloaded Wikipedia photo `<slug>.jpg`. You can also list URLs in `data/asset-sources.json` (`{"photos":{},"logos":{},"themes":{}}`) and run `npm run assets`.
+- On Render, `npm install` runs a post-install step that downloads photos and stats (about 6 minutes).
