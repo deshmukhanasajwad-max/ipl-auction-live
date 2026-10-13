@@ -37,11 +37,13 @@ async function lookup(name, fetchFn = fetch) {
 
 const existing = (dir, s) => ["jpg", "png", "webp", "gif", "jpeg"].map(e => `${s}.${e}`).find(f => fs.existsSync(path.join(dir, f)));
 
-async function run({ players, outDir = path.join(ROOT, "public", "photos"), mapFile = path.join(ROOT, "data", "photos.json"), fetchFn = fetch, delay = 120, log = console.log }) {
+async function run({ players, outDir = path.join(ROOT, "public", "photos"), mapFile = path.join(ROOT, "data", "photos.json"), fetchFn = fetch, delay = 120, log = console.log, budgetMs = Infinity }) {
+  const t0 = Date.now();
   fs.mkdirSync(outDir, { recursive: true });
   let map = {}; try { map = JSON.parse(fs.readFileSync(mapFile, "utf8")); } catch {}
   const missing = [], failed = []; let got = 0, kept = 0;
   for (const p of players) {
+    if (Date.now() - t0 > budgetMs) { missing.push(p.name + " (time budget)"); continue; }
     const s = slug(p.name), have = existing(outDir, s);
     if (have) { map[p.name] = "/photos/" + have; kept++; continue; }
     try {
@@ -62,7 +64,7 @@ async function run({ players, outDir = path.join(ROOT, "public", "photos"), mapF
 async function main() {
   const players = require("../src/data").loadPlayers(path.join(ROOT, "data", "players.csv"));
   console.log(`Looking up ${players.length} players on Wikipedia (about 2-4 minutes)...`);
-  const r = await run({ players });
+  const r = await run({ players, budgetMs: Number(process.env.PHOTO_BUDGET_MS) || Infinity });
   console.log(`\nDone. ${r.got} downloaded, ${r.kept} already had a photo, ${r.missing.length} not found, ${r.failed.length} failed (of ${r.total}).`);
   if (r.missing.length) console.log("\nNo Wikipedia photo (initials will show). Drop your own file in public/photos/<slug>.jpg:\n  " + r.missing.map(n => `${n} -> ${slug(n)}.jpg`).join("\n  "));
   if (r.failed.length) console.log("\nFailed (check internet, run again):\n  " + r.failed.join("\n  "));
